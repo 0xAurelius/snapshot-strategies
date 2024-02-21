@@ -36,17 +36,27 @@ const stampCredentials = STAMPS.map((stamp) => {
 // Useful to get stamp metadata and update `stampsMetata.json`
 // console.log('stampCredentials', JSON.stringify(stampCredentials.map((s) => ({"const": s.id, title: s.name}))));
 
-function hasValidIssuanceAndExpiration(credential: any, proposalTs: string) {
+function hasValidIssuanceAndExpiration(
+  credential: any,
+  proposalTs: string,
+  checkExpired: boolean
+) {
   const issuanceDate = Number(
     new Date(credential.issuanceDate).getTime() / 1000
   ).toFixed(0);
   const expirationDate = Number(
     new Date(credential.expirationDate).getTime() / 1000
   ).toFixed(0);
-  if (issuanceDate <= proposalTs && expirationDate >= proposalTs) {
-    return true;
+
+  let isValid = false;
+  if (issuanceDate <= proposalTs) {
+    if (checkExpired && expirationDate >= proposalTs) {
+      isValid = true;
+    } else if (~checkExpired) {
+      isValid = true;
+    }
   }
-  return false;
+  return isValid;
 }
 
 function hasStampCredential(stampId: string, credentials: Array<string>) {
@@ -64,7 +74,9 @@ async function validateStamps(
   currentAddress: string,
   operator: string,
   proposalTs: string,
-  requiredStamps: Array<string> = []
+  requiredStamps: Array<string> = [],
+  minStamps: number,
+  checkExpired: boolean
 ): Promise<boolean> {
   if (requiredStamps.length === 0) return true;
 
@@ -82,7 +94,7 @@ async function validateStamps(
   // check expiration for all stamps
   const validStamps = stampsData.items
     .filter((stamp: any) =>
-      hasValidIssuanceAndExpiration(stamp.credential, proposalTs)
+      hasValidIssuanceAndExpiration(stamp.credential, proposalTs, checkExpired)
     )
     .map((stamp: any) => stamp.credential.credentialSubject.provider);
 
@@ -94,7 +106,19 @@ async function validateStamps(
     return requiredStamps.some((stampId) =>
       hasStampCredential(stampId, validStamps)
     );
+  } else if (operator === 'MIN') {
+    if (minStamps === null) {
+      throw new Error(
+        'When using MIN operator, minStamps parameter must be specified'
+      );
+    }
+    return (
+      requiredStamps.filter((stampId) =>
+        hasStampCredential(stampId, validStamps)
+      ).length >= minStamps
+    );
   }
+
   return false;
 }
 
@@ -168,6 +192,8 @@ export default class extends Validation {
     const requiredStamps = this.params.stamps || [];
     const operator = this.params.operator;
     const scoreThreshold = this.params.scoreThreshold;
+    const minStamps = this.params.minStamps;
+    const checkExpired = this.params.checkExpired;
 
     if (scoreThreshold === undefined)
       throw new Error('Score threshold is required');
@@ -180,7 +206,9 @@ export default class extends Validation {
       currentAddress,
       operator,
       proposalTs,
-      requiredStamps
+      requiredStamps,
+      minStamps,
+      checkExpired
     );
 
     if (scoreThreshold === 0) {
